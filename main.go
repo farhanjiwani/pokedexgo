@@ -6,21 +6,25 @@ import (
     "os";
 )
 
+type config struct {
+    cmdRegistry map[string]cliCommand
+}
+
 type cliCommand struct {
     name string
     description string
-    callback func() error
+    callback func(*config) error
 }
 
 var commands map[string]cliCommand
 
-func commandExit() error {
+func commandExit(*config) error {
     fmt.Println("Closing the Pokedex... Goodbye!")
     os.Exit(0)
     return nil
 }
 
-func commandHelp() error {
+func commandHelp(*config) error {
     fmt.Println("Welcome to the Pokedex!")
     fmt.Println("Usage:\n")
 
@@ -45,8 +49,11 @@ func main() {
 	    callback: commandHelp,
         },
     }
+    stateConfig := config {
+	cmdRegistry: commands,
+    }
 
-   scanner := bufio.NewScanner(os.Stdin)
+    scanner := bufio.NewScanner(os.Stdin)
 
     for ;; {
 	fmt.Print("Pokedex > ")
@@ -56,7 +63,7 @@ func main() {
 	if _, ok := commands[words[0]]; !ok {
 	    fmt.Println("Unknown command\n")
 	} else {
-	    commands[words[0]].callback()
+		commands[words[0]].callback(&stateConfig)
 	}
     }
 }
