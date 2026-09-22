@@ -35,10 +35,21 @@ type locationArea struct {
     Url		string	`json:"url"`
 }
 
+type locationPokemonResult struct {
+	Name		string		`json:"name"`
+	Encounters	[]encounter `json:"pokemon_encounters"`
+}
+
+type encounter struct {
+	Pokemon		struct{
+		Name	string	`json:"name"`
+	}	`json:"pokemon"`
+}
+
 type cliCommand struct {
     name 		string
     description	string
-    callback 	func(*config) error
+    callback 	func(*config, string) error
 }
 var commands map[string]cliCommand
 
@@ -73,7 +84,7 @@ func addAreasToCache(state *config, url, value, previous, next string) {
 	state.cache.Add(offset + "n", []byte(next))
 }
 
-func serveCachedOrFetchedNew(state *config, url string) {
+func getLocationAreas(state *config, url string) {
 	offset := getOffsetParam(url)
 	page, _ := strconv.Atoi(offset)
 	page = int(math.Floor(float64(page) / 20) + 1)
@@ -86,7 +97,7 @@ func serveCachedOrFetchedNew(state *config, url string) {
 		next, _ := state.cache.Get(offset + "n")
 		state.mapPrev = string(prev)
 		state.mapNext = string(next)
-		listSrc = fmt.Sprintf(" (cached)")
+		listSrc = " (cached)"
 
 	} else {
 		cmdMap(url, state)
@@ -94,21 +105,33 @@ func serveCachedOrFetchedNew(state *config, url string) {
 	fmt.Printf("[Page %d%s]\n", page, listSrc)
 }
 
-func commandMapNext(state *config) error {
+func getAreaEncounters(state *config, locationArea string) {
+	listSrc := ""
+	values, exists := state.cache.Get(locationArea)
+	if exists {
+		fmt.Printf("%s", values)
+		listSrc = "\n (cached)\n"
+	} else {
+		cmdExplore(locationArea, state)
+	}
+	fmt.Printf("%s\n", listSrc)
+}
+
+func commandMapNext(state *config, _nil string) error {
     if state.mapNext == "" {
 		fmt.Printf("you're on the last page\n")
 	} else {
-		serveCachedOrFetchedNew(state, state.mapNext)
+		getLocationAreas(state, state.mapNext)
 	}
 	return nil
 
 }
 
-func commandMapPrev(state *config) error {
+func commandMapPrev(state *config, _ string) error {
     if state.mapPrev == "" {
 		fmt.Printf("you're on the first page\n")
     } else {
-		serveCachedOrFetchedNew(state, state.mapPrev)
+		getLocationAreas(state, state.mapPrev)
     }
     return nil
 }
@@ -146,13 +169,52 @@ func cmdMap(url string, state *config) error {
     return nil
 }
 
-func commandExit(*config) error {
+func cmdExplore(location string, state *config) error {
+	endpoint := getPokeEndPoint("location-area/" + location)
+
+    res, err := http.Get(endpoint)
+    if err != nil {
+		log.Fatalf("Error reaching location area '%s': %v", location, err)
+    }
+    defer res.Body.Close()
+
+    data, err := io.ReadAll(res.Body)
+    if err != nil || res.StatusCode > 299 {
+		log.Fatalf("Error returned from location area '%s': %v", location, err)
+    }
+
+	encounters := locationPokemonResult{}
+    if err := json.Unmarshal(data, &encounters); err != nil {
+		log.Fatalf("Error parsing '%s' encounter data: %v", location, err)
+    }
+	fmt.Printf("Exploring %s...\nFound Pokemon:\n", encounters.Name)
+
+	pokeList := ""
+	for _, p := range encounters.Encounters {
+		pokeList += fmt.Sprintf(" - %s\n", p.Pokemon.Name)
+	}
+	fmt.Println(pokeList)
+
+	state.cache.Add(location, []byte(pokeList))
+	return nil
+}
+
+func commandExplore(state *config, location string) error {
+	if len(location) == 0 {
+		fmt.Println("LOCATION REQUIRED! Use `map` or `mapb` for location names")
+	}
+	
+	getAreaEncounters(state, location)
+	return nil
+}
+
+func commandExit(*config, string) error {
     fmt.Println("Closing the Pokedex... Goodbye!")
     os.Exit(0)
     return nil
 }
 
-func commandHelp(*config) error {
+func commandHelp(*config, string) error {
     fmt.Println("Welcome to the Pokedex!")
     fmt.Println("Usage:")
 
@@ -187,6 +249,11 @@ func main() {
 			description: 	"Displays previous 20 location area names",
 			callback: 		commandMapPrev,
 		},
+		"explore": {
+			name:			"explore",
+			description: 	"List Pokemon at desired location",
+			callback: 		commandExplore,
+		},
     }
     stateConfig := config {
 		cmdRegistry:	commands,
@@ -201,11 +268,15 @@ func main() {
 		fmt.Print("Pokedex > ")
 		scanner.Scan()
 		words := cleanInput(scanner.Text())
+		arg := ""
+		if len(words) > 1 {
+			arg = words[1]
+		}
 
 		if _, ok := commands[words[0]]; !ok {
 			fmt.Println("Unknown command")
 		} else {
-			commands[words[0]].callback(&stateConfig)
+			commands[words[0]].callback(&stateConfig, arg)
 		}
     }
 }
