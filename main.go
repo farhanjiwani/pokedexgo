@@ -7,6 +7,7 @@ import (
     "io";
     "log";
 	"math";
+	"math/rand";
     "net/http";
 	"net/url";
     "os";
@@ -21,7 +22,23 @@ type config struct {
     mapNext		string
     mapPrev		string
     cache		pCache.Cache
+	pokedex		map[string]Pokemon
 }
+
+type cliCommand struct {
+    name 		string
+    description	string
+    callback 	func(*config, string) error
+}
+var commands map[string]cliCommand
+
+type Pokemon struct {
+	Name		string	`json:"name"`
+	Count		int		`json:"count"`
+	BaseExp		float32	`json:"base_experience"`
+	LuckBonus	float32	`json:"luck_bonus"`
+}
+
 
 type locationAreasResult struct {
     Count		int				`json:"count"`
@@ -46,13 +63,6 @@ type encounter struct {
 	}	`json:"pokemon"`
 }
 
-type cliCommand struct {
-    name 		string
-    description	string
-    callback 	func(*config, string) error
-}
-var commands map[string]cliCommand
-
 /** Parses endpoint URL for the offset parameter **/
 func getOffsetParam(urlString string) string {
 	rawURL, err := url.Parse(urlString);
@@ -71,6 +81,32 @@ func getOffsetParam(urlString string) string {
 func getPokeEndPoint(path string) string {
     prefix := "https://pokeapi.co/api/v2/"
     return fmt.Sprintf("%s%s", prefix, path)
+}
+
+// WARN: Only call this after checking the cache first
+func fetchPokemon(target string) (Pokemon, error) {
+	endpoint := getPokeEndPoint("pokemon/" + target)
+
+    res, err := http.Get(endpoint)
+    if err != nil {
+		log.Fatalf("Error reaching Pokemon '%s': %v", target, err)
+    }
+    defer res.Body.Close()
+
+    data, err := io.ReadAll(res.Body)
+    if err != nil || res.StatusCode > 299 {
+		if err == nil {
+			return Pokemon{}, fmt.Errorf("Pokemon '%s' not found", target)
+		}
+		log.Fatalf("Error returned from Pokemon '%s': %v", target, err)
+    }
+
+	pokemon := Pokemon{}
+    if err := json.Unmarshal(data, &pokemon); err != nil {
+		log.Fatalf("Error parsing '%s' Pokemon data: %v", target, err)
+    }
+
+	return pokemon, nil
 }
 
 /**
@@ -208,6 +244,64 @@ func commandExplore(state *config, location string) error {
 	return nil
 }
 
+func rollDice(p Pokemon) bool {
+	const MAX_BASE_EXP float32 = 255.0
+	const BASE_CHANCE float32 = 0.75
+
+	fmt.Printf("\nBase Experience (%s): %.0f exp.\n", p.Name, p.BaseExp)
+	fmt.Printf("Luck Bonus (vs %s): %.0f pts.\n", p.Name, p.LuckBonus)
+
+	chance := BASE_CHANCE * p.BaseExp / (MAX_BASE_EXP * (1 + p.LuckBonus / 100.0))
+	// fmt.Printf("\n%.2f * %f / %f = %.2f\n", BASE_CHANCE, p.BaseExp, MAX_BASE_EXP, chance)
+	chance = 100 - chance * 100
+	fmt.Printf("Probability: %.2f%%\n\n", chance)
+
+	roll := rand.Intn(101)
+	// fmt.Printf("Rolled: %d", roll)
+	if roll > 100 - int(chance) {
+		fmt.Printf("%s was caught!\n", p.Name)
+		return true
+	}
+	fmt.Printf("%s escaped!\n", p.Name)
+	return false
+}
+
+func commandCatch(state *config, targetPokemon string) error {
+	if len(targetPokemon) == 0 {
+		fmt.Println("POKEMON NAME REQUIRED! Use `explore LOCATION_AREA` for available names")
+	}
+	// check if pokemon exists
+	var pokemon Pokemon
+
+	pokemon, ok := state.pokedex[targetPokemon]
+	if !ok {
+		fmt.Printf("Fetching %s...\n", targetPokemon)
+		fetchedPokemon, error := fetchPokemon(targetPokemon)
+		if error != nil {
+			fmt.Printf("Fetch returned with error: %v\n", error)
+			return nil
+		}
+		state.pokedex[targetPokemon] = fetchedPokemon
+		pokemon = fetchedPokemon
+	} else if pokemon.Count > 0 {
+		fmt.Printf("Already %d in Pokedex! 💪🏼\n", pokemon.Count)
+	}
+
+	fmt.Printf("Throwing a Pokeball at %s...\n", targetPokemon)
+	wasCaught := rollDice(pokemon)
+	if wasCaught {
+		pokemon.Count += 1;
+		pokemon.LuckBonus -= 25.0
+	} else {
+		// pokemon = state.pokedex[targetPokemon]
+		pokemon.LuckBonus += 50.0
+	}
+	state.pokedex[targetPokemon] = pokemon
+	
+	return nil
+	
+}
+
 func commandExit(*config, string) error {
     fmt.Println("Closing the Pokedex... Goodbye!")
     os.Exit(0)
@@ -219,7 +313,8 @@ func commandHelp(*config, string) error {
     fmt.Println("Usage:")
 
     for _, command := range commands {
-	fmt.Printf("%s:\t%s\n", command.name, command.description)
+		// TODO: Add some padding so the menu aligns
+		fmt.Printf("%s:\t%s\n", command.name, command.description)
     }
     fmt.Printf("\n")
 
@@ -254,12 +349,18 @@ func main() {
 			description: 	"List Pokemon at desired location",
 			callback: 		commandExplore,
 		},
+		"catch": {
+			name:			"catch",
+			description: 	"Attempt to catch a desired pokemon",
+			callback: 		commandCatch,
+		},
     }
     stateConfig := config {
 		cmdRegistry:	commands,
-		mapNext:	getPokeEndPoint("location-area"),
-		mapPrev:	"",
-		cache:		pc,
+		mapNext:		getPokeEndPoint("location-area"),
+		mapPrev:		"",
+		cache:			pc,
+		pokedex:		map[string]Pokemon{},
     }
 
     scanner := bufio.NewScanner(os.Stdin)
