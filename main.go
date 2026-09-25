@@ -33,12 +33,29 @@ type cliCommand struct {
 var commands map[string]cliCommand
 
 type Pokemon struct {
-	Name		string	`json:"name"`
-	Count		int		`json:"count"`
-	BaseExp		float32	`json:"base_experience"`
-	LuckBonus	float32	`json:"luck_bonus"`
+	Name		string			`json:"name"`
+	Height		int				`json:"height"`
+	Weight		int				`json:"weight"`
+	BaseExp		float32			`json:"base_experience"`
+	Stats		[]PokemonStat	`json:"stats"`
+	Types		[]PokemonType	`json:"types"`
+	// Not from API
+	Count		int				`json:"count"`
+	LuckBonus	float32			`json:"luck_bonus"`
 }
 
+type PokemonType struct {
+	Type struct{
+		Name	string	`json:"name"`
+	}					`json:"type"`
+}
+
+type PokemonStat struct {
+	BaseStat	int		`json:"base_stat"`
+	Stat struct{
+		Name	string	`json:"name"`
+	}					`json:"stat"`
+}
 
 type locationAreasResult struct {
     Count		int				`json:"count"`
@@ -58,9 +75,9 @@ type locationPokemonResult struct {
 }
 
 type encounter struct {
-	Pokemon		struct{
+	Pokemon struct{
 		Name	string	`json:"name"`
-	}	`json:"pokemon"`
+	}					`json:"pokemon"`
 }
 
 /** Parses endpoint URL for the offset parameter **/
@@ -138,7 +155,7 @@ func getLocationAreas(state *config, url string) {
 	} else {
 		cmdMap(url, state)
     }
-	fmt.Printf("[Page %d%s]\n", page, listSrc)
+	fmt.Printf("[Page %d%s]\n\n", page, listSrc)
 }
 
 func getAreaEncounters(state *config, locationArea string) {
@@ -190,7 +207,7 @@ func cmdMap(url string, state *config) error {
     }
 
 	// Format, cache and output
-	locationsFmt := "\n"
+	locationsFmt := ""
     for _, area := range locAreas.Results {
 		locationsFmt += fmt.Sprintf("%s\n", area.Name)
     }
@@ -229,7 +246,7 @@ func cmdExplore(location string, state *config) error {
 	for _, p := range encounters.Encounters {
 		pokeList += fmt.Sprintf(" - %s\n", p.Pokemon.Name)
 	}
-	fmt.Println(pokeList)
+	fmt.Print(pokeList)
 
 	state.cache.Add(location, []byte(pokeList))
 	return nil
@@ -259,10 +276,10 @@ func rollDice(p Pokemon) bool {
 	roll := rand.Intn(101)
 	// fmt.Printf("Rolled: %d", roll)
 	if roll > 100 - int(chance) {
-		fmt.Printf("%s was caught!\n", p.Name)
+		fmt.Printf("%s was caught!\n\n", p.Name)
 		return true
 	}
-	fmt.Printf("%s escaped!\n", p.Name)
+	fmt.Printf("%s escaped!\n\n", p.Name)
 	return false
 }
 
@@ -300,6 +317,30 @@ func commandCatch(state *config, targetPokemon string) error {
 	
 	return nil
 	
+}
+
+func commandInspect(state *config, targetPokemon string) error {
+	if len(targetPokemon) == 0 {
+		fmt.Println("POKEMON NAME REQUIRED! Use `explore LOCATION_AREA` for available names")
+	}
+
+	p, ok := state.pokedex[targetPokemon]
+	if !ok || p.Count == 0 {
+		fmt.Println("you have not caught that pokemon")
+	} else {
+		fmt.Printf("Name: %s\nHeight: %d\nWeight: %d\n", p.Name, p.Height, p.Weight)
+		fmt.Println("Stats:")
+		for _, ps := range p.Stats {
+			fmt.Printf("  - %s: %d\n", ps.Stat.Name, ps.BaseStat)
+		}
+		fmt.Println("Types:")
+		for _, pt := range p.Types {
+			fmt.Printf("  - %s\n", pt.Type.Name)
+		}
+		fmt.Println()
+	}
+
+	return nil
 }
 
 func commandExit(*config, string) error {
@@ -353,6 +394,11 @@ func main() {
 			name:			"catch",
 			description: 	"Attempt to catch a desired pokemon",
 			callback: 		commandCatch,
+		},
+		"inspect": {
+			name:			"inspect",
+			description: 	"View stats of desired caught pokemon in pokedex",
+			callback: 		commandInspect,
 		},
     }
     stateConfig := config {
