@@ -343,6 +343,19 @@ func commandInspect(state *config, targetPokemon string) error {
 	return nil
 }
 
+func commandPokedex(state *config, _nil string) error {
+	fmt.Println("Your Pokedex:")
+	for _, p := range state.pokedex {
+		fmt.Printf("  - %s", p.Name)
+		if p.Count > 1 {
+			fmt.Printf(" (%d)", p.Count)
+		}
+		fmt.Println()
+	}
+	fmt.Println()
+	return nil
+}
+
 func commandExit(*config, string) error {
     fmt.Println("Closing the Pokedex... Goodbye!")
     os.Exit(0)
@@ -397,8 +410,13 @@ func main() {
 		},
 		"inspect": {
 			name:			"inspect",
-			description: 	"View stats of desired caught pokemon in pokedex",
+			description: 	"View stats of desired pokemon in pokedex",
 			callback: 		commandInspect,
+		},
+		"pokedex": {
+			name:			"pokedex",
+			description: 	"View a list of pokemon in pokedex",
+			callback: 		commandPokedex,
 		},
     }
     stateConfig := config {
